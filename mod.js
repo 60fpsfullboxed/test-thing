@@ -11,7 +11,8 @@
     const ESP_CONFIG = {
         enabled: true,
         alwaysOn: true,
-        lineWidth: 2,
+        lineWidth: 2, // Reduced line width for better visibility
+        dotSize: 2, // Smaller dot size
         colors: {
             enemy: "#FF0000",
             ally: "#00FF00",
@@ -19,13 +20,18 @@
             danger: "#FF00FF",
             resource: "#00FFFF"
         },
-        renderDistance: 2000,
+        renderDistance: 1600, // Maximum view distance for ESP
         showDistance: true,
         showHealth: true,
         showNames: true,
         dangerThreshold: 300,
         showResources: true
     };
+
+    // Debugging variables
+    let debugMode = true;
+    let lastRenderTime = 0;
+    let renderCount = 0;
 
     // Function to safely access game objects
     function getGameObjects() {
@@ -58,6 +64,32 @@
         return player.team && target.team && player.team === target.team;
     }
 
+    // Log player positions for debugging
+    function logPlayerPositions() {
+        const game = getGameObjects();
+        if (!game.player || !game.players.length) return;
+        
+        console.log("Player position:", {
+            x: game.player.x,
+            y: game.player.y,
+            x2: game.player.x2, 
+            y2: game.player.y2
+        });
+        
+        console.log("Other players:", game.players.length);
+        game.players.slice(0, 3).forEach((p, i) => {
+            console.log(`Player ${i}:`, {
+                name: p.name,
+                active: p.active,
+                alive: p.alive,
+                x: p.x,
+                y: p.y,
+                x2: p.x2,
+                y2: p.y2
+            });
+        });
+    }
+
     // Main ESP rendering function
     function renderESP() {
         const game = getGameObjects();
@@ -65,23 +97,44 @@
 
         const { player, players, ais, mainContext, camX, camY, camScale } = game;
         
+        // Debug rendering performance
+        renderCount++;
+        const now = Date.now();
+        if (now - lastRenderTime > 2000) {
+            console.log(`[UNO ESP] Rendering at ${renderCount / 2} FPS`);
+            renderCount = 0;
+            lastRenderTime = now;
+            
+            // Log data in debug mode
+            if (debugMode) {
+                logPlayerPositions();
+            }
+        }
+        
         mainContext.save();
         mainContext.lineWidth = ESP_CONFIG.lineWidth;
         
         // Draw lines to players
+        let drawnLines = 0;
         for (let i = 0; i < players.length; i++) {
             const target = players[i];
             if (!target || !target.active || !target.alive || target.sid === player.sid) continue;
             
+            // Calculate coordinates
+            const playerX = player.x2 !== undefined ? player.x2 : player.x;
+            const playerY = player.y2 !== undefined ? player.y2 : player.y;
+            const targetX = target.x2 !== undefined ? target.x2 : target.x;
+            const targetY = target.y2 !== undefined ? target.y2 : target.y;
+            
             // Calculate distance
-            const distance = getDist(player, target);
+            const distance = Math.hypot(targetX - playerX, targetY - playerY);
             if (distance > ESP_CONFIG.renderDistance) continue;
             
             // Calculate screen positions
-            const playerScreenX = (player.x - camX) * camScale;
-            const playerScreenY = (player.y - camY) * camScale;
-            const targetScreenX = (target.x - camX) * camScale;
-            const targetScreenY = (target.y - camY) * camScale;
+            const playerScreenX = (playerX - camX) * camScale;
+            const playerScreenY = (playerY - camY) * camScale;
+            const targetScreenX = (targetX - camX) * camScale;
+            const targetScreenY = (targetY - camY) * camScale;
             
             // Determine if target is dangerous (close enough)
             const isDangerous = distance < ESP_CONFIG.dangerThreshold;
@@ -91,16 +144,21 @@
             const colorKey = isAlly ? "ally" : (isDangerous ? "danger" : "enemy");
             const lineColor = ESP_CONFIG.colors[colorKey];
             
-            // Calculate opacity based on distance
-            const opacity = Math.max(0.3, 1 - (distance / ESP_CONFIG.renderDistance));
-            
             // Draw line from player to target
             mainContext.beginPath();
-            mainContext.strokeStyle = lineColor.replace("#", "rgba(").replace(/([0-9A-F]{2})/gi, '$1,') + opacity + ")";
+            mainContext.strokeStyle = lineColor;
             mainContext.lineWidth = ESP_CONFIG.lineWidth * (isDangerous ? 1.5 : 1);
             mainContext.moveTo(playerScreenX, playerScreenY);
             mainContext.lineTo(targetScreenX, targetScreenY);
             mainContext.stroke();
+            
+            drawnLines++;
+            
+            // Draw small dot at target position
+            mainContext.beginPath();
+            mainContext.fillStyle = lineColor;
+            mainContext.arc(targetScreenX, targetScreenY, ESP_CONFIG.dotSize, 0, Math.PI * 2);
+            mainContext.fill();
             
             // Show additional information
             if (ESP_CONFIG.showDistance || ESP_CONFIG.showNames) {
@@ -145,34 +203,48 @@
             }
         }
         
+        // Log how many lines were drawn in this frame
+        if (debugMode && drawnLines > 0) {
+            console.log(`[UNO ESP] Drew ${drawnLines} lines to players`);
+        }
+        
         // Draw lines to AI enemies
         for (let i = 0; i < ais.length; i++) {
             const ai = ais[i];
             if (!ai || !ai.active || !ai.alive) continue;
             
+            // Calculate coordinates
+            const playerX = player.x2 !== undefined ? player.x2 : player.x;
+            const playerY = player.y2 !== undefined ? player.y2 : player.y;
+            const aiX = ai.x2 !== undefined ? ai.x2 : ai.x;
+            const aiY = ai.y2 !== undefined ? ai.y2 : ai.y;
+            
             // Calculate screen positions
-            const playerScreenX = (player.x - camX) * camScale;
-            const playerScreenY = (player.y - camY) * camScale;
-            const aiScreenX = (ai.x - camX) * camScale;
-            const aiScreenY = (ai.y - camY) * camScale;
+            const playerScreenX = (playerX - camX) * camScale;
+            const playerScreenY = (playerY - camY) * camScale;
+            const aiScreenX = (aiX - camX) * camScale;
+            const aiScreenY = (aiY - camY) * camScale;
             
             // Calculate distance
-            const distance = getDist(player, ai);
+            const distance = Math.hypot(aiX - playerX, aiY - playerY);
             if (distance > ESP_CONFIG.renderDistance) continue;
-            
-            // Calculate opacity based on distance
-            const opacity = Math.max(0.3, 1 - (distance / ESP_CONFIG.renderDistance));
             
             // AI enemies are always drawn in yellow
             const lineColor = ESP_CONFIG.colors.ai;
             
             // Draw line from player to AI
             mainContext.beginPath();
-            mainContext.strokeStyle = lineColor.replace("#", "rgba(").replace(/([0-9A-F]{2})/gi, '$1,') + opacity + ")";
+            mainContext.strokeStyle = lineColor;
             mainContext.lineWidth = ESP_CONFIG.lineWidth;
             mainContext.moveTo(playerScreenX, playerScreenY);
             mainContext.lineTo(aiScreenX, aiScreenY);
             mainContext.stroke();
+            
+            // Draw small dot at AI position
+            mainContext.beginPath();
+            mainContext.fillStyle = lineColor;
+            mainContext.arc(aiScreenX, aiScreenY, ESP_CONFIG.dotSize, 0, Math.PI * 2);
+            mainContext.fill();
             
             // Draw AI info
             if (ESP_CONFIG.showDistance || ESP_CONFIG.showNames) {
@@ -195,43 +267,6 @@
             }
         }
         
-        // Draw lines to important resources
-        if (ESP_CONFIG.showResources) {
-            const resources = (game.gameObjects || []).filter(obj => 
-                obj.active && (obj.name === "food" || obj.name?.includes("stone") || obj.name?.includes("gold"))
-            );
-            
-            for (let i = 0; i < resources.length; i++) {
-                const resource = resources[i];
-                if (!resource) continue;
-                
-                const distance = getDist(player, resource);
-                if (distance > ESP_CONFIG.renderDistance / 2) continue; // Show resources at shorter range
-                
-                // Only show if looking for resources and not in combat
-                if (players.filter(p => !isTeammate(player, p) && getDist(player, p) < ESP_CONFIG.dangerThreshold).length > 0) {
-                    continue;
-                }
-                
-                // Calculate screen positions
-                const playerScreenX = (player.x - camX) * camScale;
-                const playerScreenY = (player.y - camY) * camScale;
-                const resourceScreenX = (resource.x - camX) * camScale;
-                const resourceScreenY = (resource.y - camY) * camScale;
-                
-                // Calculate opacity based on distance
-                const opacity = Math.max(0.2, 0.6 - (distance / ESP_CONFIG.renderDistance));
-                
-                // Draw line to resource
-                mainContext.beginPath();
-                mainContext.strokeStyle = ESP_CONFIG.colors.resource.replace("#", "rgba(").replace(/([0-9A-F]{2})/gi, '$1,') + opacity + ")";
-                mainContext.lineWidth = ESP_CONFIG.lineWidth * 0.7;
-                mainContext.moveTo(playerScreenX, playerScreenY);
-                mainContext.lineTo(resourceScreenX, resourceScreenY);
-                mainContext.stroke();
-            }
-        }
-        
         mainContext.restore();
     }
 
@@ -246,6 +281,10 @@
             ESP_CONFIG.showHealth = !ESP_CONFIG.showHealth;
         } else if (event.key === 'r') {
             ESP_CONFIG.showResources = !ESP_CONFIG.showResources;
+        } else if (event.key === 'd' && event.ctrlKey) {
+            // Ctrl+D toggles debug mode
+            debugMode = !debugMode;
+            console.log(`[UNO ESP] Debug mode ${debugMode ? 'enabled' : 'disabled'}`);
         }
     }
 
@@ -254,13 +293,30 @@
         const game = getGameObjects();
         if (game.player && game.player.alive && window.ShowSettingTextGreen) {
             window.ShowSettingTextGreen(2, ESP_CONFIG.enabled ? "ESP Enabled" : "ESP Disabled");
+        } else {
+            console.log(`[UNO ESP] ESP ${ESP_CONFIG.enabled ? 'enabled' : 'disabled'}`);
         }
+    }
+    
+    // Alternative rendering method using requestAnimationFrame
+    function setupDirectRendering() {
+        function renderLoop() {
+            try {
+                renderESP();
+            } catch (e) {
+                console.error("[UNO ESP] Render error:", e);
+            }
+            requestAnimationFrame(renderLoop);
+        }
+        
+        requestAnimationFrame(renderLoop);
     }
     
     // Initialize the ESP system
     function initESP() {
         const game = getGameObjects();
-        if (!game.mainContext || !window.renderer) {
+        if (!game.mainContext) {
+            console.log("[UNO ESP] Game not ready yet, retrying in 1 second");
             setTimeout(initESP, 1000); // Retry until game elements are ready
             return;
         }
@@ -270,35 +326,45 @@
         // Add event listener for key controls
         document.addEventListener('keydown', handleKeyControls);
         
-        // Hook into game's render loop
+        // Try multiple rendering methods for compatibility
+
+        // Method 1: Hook into game's render function if available
         if (window.renderer && typeof window.renderer.render === 'function') {
             const originalRender = window.renderer.render;
             window.renderer.render = function() {
                 originalRender.apply(this, arguments);
                 if (ESP_CONFIG.enabled || ESP_CONFIG.alwaysOn) {
-                    renderESP();
-                }
-            };
-        } else {
-            // Fallback to our own render loop
-            setInterval(function() {
-                const game = getGameObjects();
-                if (game.player && game.player.alive && game.inGame && game.mainContext) {
-                    if (ESP_CONFIG.enabled || ESP_CONFIG.alwaysOn) {
+                    try {
                         renderESP();
+                    } catch (e) {
+                        console.error("[UNO ESP] Error in render hook:", e);
                     }
                 }
-            }, 1000/60); // 60fps
+            };
+            console.log('[UNO ESP] Hooked into game renderer');
+        } else {
+            console.log('[UNO ESP] Game renderer not found, using fallback methods');
+            
+            // Method 2: Use requestAnimationFrame
+            setupDirectRendering();
+            
+            // Method 3: Fallback to interval (least preferred but most reliable)
+            setInterval(function() {
+                if (ESP_CONFIG.enabled || ESP_CONFIG.alwaysOn) {
+                    const game = getGameObjects();
+                    if (game.player && game.player.alive && game.inGame && game.mainContext) {
+                        try {
+                            renderESP();
+                        } catch (e) {
+                            console.error("[UNO ESP] Error in interval render:", e);
+                        }
+                    }
+                }
+            }, 1000/30); // 30fps
         }
         
-        // Add ESP controls to Visual settings menu
-        setTimeout(() => {
-            const visualTab = document.getElementById("Visual");
-            if (visualTab) {
-                // ESP controls are already added in the main script
-                console.log('[UNO ESP] ESP controls already present in UI');
-            }
-        }, 1000);
+        // Display initial status
+        showStatusMessage();
     }
     
     // Create a global API for the ESP module
@@ -309,7 +375,12 @@
             showStatusMessage();
             return ESP_CONFIG.enabled;
         },
-        render: renderESP
+        render: renderESP,
+        debug: function() {
+            debugMode = !debugMode;
+            console.log(`[UNO ESP] Debug mode ${debugMode ? 'enabled' : 'disabled'}`);
+            return debugMode;
+        }
     };
     
     // Start initialization
